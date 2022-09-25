@@ -4,6 +4,8 @@ This script provides you with the ability to calculate the energy of a molecule 
 
 ##### How to use:
 
+For correct calculation, xtb should be in PATH.
+
 Firstly, you should create object of ConfCalc class and define some properties:
 
 ```python
@@ -29,6 +31,12 @@ Next, to get energy of current conformer just type:
 
 ```python
     calculator.get_energy([0., np.pi / 2])
+```
+
+To update normalization energy:
+
+```python
+calculator.set_norm_en(0.)
 ```
 
 ##### Requirements:
