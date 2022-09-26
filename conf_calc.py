@@ -97,15 +97,34 @@ class ConfCalc:
 
         return file_name
 
+    def __generate_inp(self, 
+                       values : list[float]) -> str:
+        """
+            Generate input that constrains values
+            of dihedral angles from 'vals'
+            Returns name of inp file
+        """
+
+        inp_name = self.dir_to_xyzs + str(self.current_id) + ".inp"
+        
+        with open(inp_name, "w+") as inp_file:
+            inp_file.write("$constrain\n")
+            for idxs, value in zip(self.rotable_dihedral_idxs, values):
+                inp_file.write(f"dihedral: {idxs[0] + 1}, {idxs[1] + 1}, {idxs[2] + 1}, {idxs[3] + 1}, {180 * value / np.pi}\n")
+            inp_file.write("$end") 
+        return inp_name
+
     def __run_xtb(self,
-                  xyz_name : str) -> str:
+                  xyz_name : str,
+                  inp_name : str) -> str:
         """
             Runs xtb with current xyz_file, returns name of log file
-            timeout - period im ms to check log file
+            xyz_name - name of .xyz file
+            inp_name - name of .inp file
         """
 
         log_name = xyz_name[:-3] + "log"
-        os.system(f"xtb --charge {self.charge} --gfn {self.gfn_method} {xyz_name} > {log_name}")
+        os.system(f"xtb --input {inp_name} --charge {self.charge} --gfn {self.gfn_method} {xyz_name} --opt > {log_name}")
         
         while True:
             try:
@@ -137,12 +156,14 @@ class ConfCalc:
         return float(energy)
 
     def __calc_energy(self, 
-                      mol : Chem.Mol) -> float:
+                      mol : Chem.Mol, 
+                      inp_name : str) -> float:
         """
             Calculates energy of given molecule via xtb
+            inp_name - name of file with input
         """
         xyz_name = self.__save_mol_to_xyz(mol)
-        log_name = self.__run_xtb(xyz_name)
+        log_name = self.__run_xtb(xyz_name, inp_name)
 
         return self.__parse_energy_from_log(log_name)
 
@@ -152,6 +173,6 @@ class ConfCalc:
             Returns energy of molecule with selected values
             of dihedral angles    
         """
-
+        inp_name = self.__generate_inp(values)
         mol = self.__setup_dihedrals(values)
-        return self.__calc_energy(mol) - self.norm_en
+        return self.__calc_energy(mol, inp_name) - self.norm_en
