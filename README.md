@@ -33,10 +33,28 @@ Next, to get energy of current conformer just type:
     calculator.get_energy([0., np.pi / 2])
 ```
 
+It returns dictionary, where in field 'energy' will be current conformers' energy
+
 To update normalization energy:
 
 ```python
 calculator.set_norm_en(0.)
+```
+
+If you need energy derivatives with respect to torsion angles, type this:
+
+```python
+calculator.get_energy([0., 0., 0.], req_grad=True)
+```
+
+It will return dict with energy and list of gradients like this:
+
+```python
+{
+    'energy': 0.
+    'grads' : [([0, 1, 2, 3], 0.), 
+               ([1, 2, 3, 4], 0.)]
+}
 ```
 
 ##### Requirements:
