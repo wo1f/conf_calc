@@ -346,7 +346,21 @@ def wilson_b_matrix(x_cartesian : np.ndarray,
             
     return B
 
-def parse_to_internal(mol : Chem.rdchem.Mol) -> tuple[list]:
+def non_parallel_direction(d : vec3d) -> vec3d:
+    
+    dirs = np.array([[1., 0., 0.], [0., 1., 0.], [0., 0., 1.]])
+    return sorted(dirs, key=lambda v: d.dot(v) ** 2)[0]
+
+def orthogonal_axis(d : vec3d,
+                    axis : vec3d) -> tuple[vec3d]:
+    first = np.cross(d, axis)
+    first /= np.sqrt(first.dot(first))
+    second = np.cross(d, first)
+    second /= np.sqrt(second.dot(second))
+    return first, second
+
+def parse_to_internal(mol : Chem.rdchem.Mol,
+                      coords : np.ndarray) -> tuple[list]:
     """
         returns a list of Bonds, Angles, Torisons, Linear Angles and Out-of-Plane Bends
     """
@@ -391,7 +405,11 @@ def parse_to_internal(mol : Chem.rdchem.Mol) -> tuple[list]:
 
     for angle in angles_lst:
         if np.abs(rdMolTransforms.GetAngleRad(mol.GetConformer(), *angle) - np.pi) < tol:
-            linear_angles.append(LinearAngle(*angle))
+            d = coords[angle[2], :] - coords[angle[0], :]
+            axis = non_parallel_direction(d)
+            first, second = orthogonal_axis(d, axis)
+            linear_angles.append(LinearAngle(*angle, first))
+            linear_angles.append(LinearAngle(*angle, second))
         else:
             angles.append(Angle(*angle))
 
