@@ -1,8 +1,8 @@
-## ConfCalc
+# ConfCalc
 
 This script provides you with the ability to calculate the energy of a molecule with variable dihedral angles via xtb.
 
-##### How to use:
+### How to use:
 
 For correct calculation, xtb should be in PATH.
 
@@ -57,7 +57,11 @@ It will return dict with energy and list of gradients like this:
 }
 ```
 
-##### Requirements:
+### Requirements
 
 * rdkit
 *numpy
+
+### Reference
+
+Wilson B-Matrix implementation is taken from @RMeli irc repo, and adapted to python
