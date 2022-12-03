@@ -3,6 +3,11 @@ import numpy as np
 from rdkit import Chem
 from rdkit.Chem import rdMolTransforms
 
+from wilson_b_matrix import (
+    Dihedral,
+    get_current_derivative
+)
+
 import copy
 import os
 import time
@@ -116,7 +121,9 @@ class ConfCalc:
 
     def __run_xtb(self,
                   xyz_name : str,
-                  inp_name : str) -> str:
+                  inp_name : str,
+                  req_opt : bool = True,
+                  req_grad : bool = True) -> str:
         """
             Runs xtb with current xyz_file, returns name of log file
             xyz_name - name of .xyz file
@@ -124,7 +131,7 @@ class ConfCalc:
         """
 
         log_name = xyz_name[:-3] + "log"
-        os.system(f"xtb --input {inp_name} --charge {self.charge} --gfn {self.gfn_method} {xyz_name} --opt > {log_name}")
+        os.system(f"xtb --input {inp_name} --charge {self.charge} --gfn {self.gfn_method} {xyz_name} {'--opt' if req_opt else ''} {'--grad' if req_grad else ''} > {log_name}")
         
         while True:
             try:
@@ -155,24 +162,69 @@ class ConfCalc:
 
         return float(energy)
 
+    def __parse_grads_from_grads_file(self,
+                                      num_of_atoms : int,
+                                      grads_filename : str = "gradient") -> np.ndarray:
+        """
+            Read gradinets from file, returns ['num_of_atoms', 3] numpy array with
+            cartesian energy derivatives
+        """
+        grads = []
+        with open(grads_filename, 'r') as file:
+            grads = [line[:-1] for line in file][(2 + num_of_atoms):-1]
+        return np.array(list(map(lambda s: list(map(float, s.split())), grads)))            
+
     def __calc_energy(self, 
                       mol : Chem.Mol, 
-                      inp_name : str) -> float:
+                      inp_name : str,
+                      req_opt : bool = True,
+                      req_grad : bool = True) -> float:
         """
             Calculates energy of given molecule via xtb
             inp_name - name of file with input
+            retruns tuple of energy and gradient
         """
         xyz_name = self.__save_mol_to_xyz(mol)
-        log_name = self.__run_xtb(xyz_name, inp_name)
-
-        return self.__parse_energy_from_log(log_name)
+        log_name = self.__run_xtb(xyz_name, 
+                                  inp_name, 
+                                  req_opt=req_opt,
+                                  req_grad=req_grad)
+        irc_grad = None
+        if req_grad:
+            cart_grads = self.__parse_grads_from_grads_file(len(mol.GetAtoms()))
+            irc_grad = []
+            for rotable_idx in self.rotable_dihedral_idxs:
+                irc_grad.append((
+                        rotable_idx, 
+                        get_current_derivative(mol,
+                                               cart_grads.flatten(),
+                                               Dihedral(*rotable_idx))    
+                ))
+        return self.__parse_energy_from_log(log_name), irc_grad
 
     def get_energy(self, 
-                   values : list[float]) -> float:
+                   values : list[float], 
+                   req_opt : bool = True,
+                   req_grad : bool = True) -> float:
         """
-            Returns energy of molecule with selected values
-            of dihedral angles    
+            Returns dict with fields:
+            'energy' - energy in this point
+            'grads' - list of tuples, consists of 
+            pairs of dihedral angle atom indexes and 
+            gradients of energy with resoect to this angle
         """
         inp_name = self.__generate_inp(values)
         mol = self.__setup_dihedrals(values)
-        return self.__calc_energy(mol, inp_name) - self.norm_en
+        
+        energy, grad = self.__calc_energy(mol, 
+                                          inp_name, 
+                                          req_opt=req_opt,
+                                          req_grad=req_grad)
+        energy -= self.norm_en
+
+        return {    
+            'energy' : energy,
+            'grads' : grad
+           }
+    
+
