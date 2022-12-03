@@ -51,7 +51,7 @@ It will return dict with energy and list of gradients like this:
 
 ```python
 {
-    'energy': 0.
+    'energy': 0.,
     'grads' : [([0, 1, 2, 3], 0.), 
                ([1, 2, 3, 4], 0.)]
 }
@@ -60,3 +60,4 @@ It will return dict with energy and list of gradients like this:
 ##### Requirements:
 
 * rdkit
+*numpy
