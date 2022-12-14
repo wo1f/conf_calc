@@ -115,7 +115,7 @@ def from_trace(trace):
 def to_csv(Xs, Ys, filename='./data.csv'):
     names = list()
     data = list()
-    for x in Xs.pot_dim_0.shape[0]:
+    for x in range(Xs.pot_dim_0.shape[0]):
         names.append(f'x.{x+1}')
         data.append(Xs.isel(pot_dim_0=x))
     names.append('lp')
@@ -123,10 +123,20 @@ def to_csv(Xs, Ys, filename='./data.csv'):
     pd.DataFrame.from_dict(dict(zip(names, data))).to_csv(filename)
 
 
+# def bad(values: np.ndarray) -> float:
+#     return -(values[0]*values[0] + values[1]*values[1]+ values[2]*values[2])
+#
+#
+# def bad_grad(values: np.ndarray):
+#     return np.array([-2*values[0], -2*values[1], -2*values[2]])
+
+
 def main():
     calc = get_prepared_calculator("test.mol")
 
     logl = LogLike(calc.log_prob, calc.log_prob_grad)
+    # logl = LogLike(bad, bad_grad)
+
     with pm.Model() as model:
         pm.DensityDist(
             "pot",
