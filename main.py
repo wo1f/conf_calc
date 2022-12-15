@@ -138,15 +138,17 @@ def main():
     # logl = LogLike(bad, bad_grad)
 
     with pm.Model() as model:
+        interval = pm.distributions.transforms.Interval(lower=-np.pi, upper=np.pi)
         pm.DensityDist(
             "pot",
             logp=logl,
             shape=3,
+            transform=interval
         )
 
-    sample_num = 10
+    sample_num = 1000
     with model:
-        trace = pm.sample(sample_num)
+        trace = pm.sample(sample_num, tune=1000)
 
     xs, ys = from_trace(trace)
     to_csv(xs, ys)

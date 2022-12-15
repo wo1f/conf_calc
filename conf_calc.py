@@ -97,7 +97,7 @@ class ConfCalc:
         """
 
         file_name = self.dir_to_xyzs + str(self.current_id) + ".xyz"
-        # self.current_id += 1
+        self.current_id += 1
         Chem.MolToXYZFile(mol, file_name)
 
         return file_name
@@ -115,8 +115,9 @@ class ConfCalc:
         with open(inp_name, "w+") as inp_file:
             inp_file.write("$constrain\n")
             for i, idxs in enumerate(self.rotable_dihedral_idxs):
+                degree = (180 * values[i] / np.pi)
                 inp_file.write(
-                    f"dihedral: {idxs[0] + 1}, {idxs[1] + 1}, {idxs[2] + 1}, {idxs[3] + 1}, {(180 * values[i] / np.pi)}\n")
+                    f"dihedral: {idxs[0] + 1}, {idxs[1] + 1}, {idxs[2] + 1}, {idxs[3] + 1}, {degree}\n")
             inp_file.write("$end")
         return inp_name
 
@@ -193,8 +194,8 @@ class ConfCalc:
             #                                Dihedral(*rotable_idx))
             #     ))
                 irc_grad[i] = get_current_derivative(mol,
-                                           cart_grads.flatten(),
-                                           Dihedral(*rotable_idx))
+                                                     cart_grads.flatten(),
+                                                     Dihedral(*rotable_idx))
         return energy, irc_grad
 
     def log_prob(self, values: np.ndarray) -> float:
