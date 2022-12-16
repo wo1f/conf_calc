@@ -1,14 +1,14 @@
-import numpy as np
-import pandas as pd
 import pymc as pm
+import numpy as np
+import xarray as xr
+import pandas as pd
 import aesara.tensor as at
+
 from rdkit import Chem
 from conf_calc import ConfCalc
-import matplotlib.pyplot as plt
-import xarray as xr
 
 
-def get_prepared_calculator(mol_file):
+def get_prepared_calculator(mol_file, zero_values=np.array([0.0, 0.0, 0.0])):
     mol = Chem.MolFromMolFile(mol_file, removeHs=False)
     calculator = ConfCalc(mol=mol,
                           dir_to_xyzs="xtb_calcs/",
@@ -16,7 +16,7 @@ def get_prepared_calculator(mol_file):
                                                  [4, 6, 7, 9],
                                                  [12, 13, 15, 16]])
 
-    zero_level = calculator.log_prob(np.array([0.0, 0.0, 0.0]))
+    zero_level = calculator.log_prob(zero_values)
     calculator.norm_en = zero_level
 
     return calculator
@@ -44,7 +44,6 @@ class LogLikeGrad(at.Op):
             The log-likelihood (or whatever) function we've defined
         """
 
-        # add inputs as class attributes
         self.log_prob_grad = log_prob_grad
 
     def perform(self, node, inputs, outputs):
@@ -52,7 +51,7 @@ class LogLikeGrad(at.Op):
 
         # calculate gradients
         grads = self.log_prob_grad(theta)
-
+        # print(f'{theta=} {grads=}')
         outputs[0][0] = grads
 
 
@@ -92,6 +91,7 @@ class LogLike(at.Op):
 
         # call the log-likelihood function
         logl = self.log_prob(theta)
+        # print(f'{theta=} {logl=}')
 
         outputs[0][0] = np.array(logl)  # output the log-likelihood
 
@@ -99,11 +99,12 @@ class LogLike(at.Op):
         # the method that calculates the gradients - it actually returns the
         # vector-Jacobian product - g[0] is a vector of parameter values
         (theta,) = inputs  # our parameters
-        return [g[0] * self.log_prob_grad(theta)]
+        grad = self.log_prob_grad(theta)
+        return [g[0] * grad]
 
 
 def from_trace(trace):
-    xs_4_chanks = trace.posterior.pot
+    xs_4_chanks = trace.posterior.theta
     xs = xr.concat(xs_4_chanks, dim='draw')
 
     ys_4_chanks = trace.sample_stats.lp
@@ -112,14 +113,14 @@ def from_trace(trace):
     return xs, ys
 
 
-def to_csv(Xs, Ys, filename='./data.csv'):
+def to_csv(xs, ys, filename='./data.csv'):
     names = list()
     data = list()
-    for x in range(Xs.pot_dim_0.shape[0]):
-        names.append(f'x.{x+1}')
-        data.append(Xs.isel(pot_dim_0=x))
+    for x in range(xs.theta_dim_0.shape[0]):
+        names.append(f'theta.{x+1}')
+        data.append(xs.isel(theta_dim_0=x))
     names.append('lp')
-    data.append(Ys)
+    data.append(ys)
     pd.DataFrame.from_dict(dict(zip(names, data))).to_csv(filename)
 
 
@@ -140,7 +141,7 @@ def main():
     with pm.Model() as model:
         interval = pm.distributions.transforms.Interval(lower=-np.pi, upper=np.pi)
         pm.DensityDist(
-            "pot",
+            "theta",
             logp=logl,
             shape=3,
             transform=interval
@@ -148,7 +149,7 @@ def main():
 
     sample_num = 1000
     with model:
-        trace = pm.sample(sample_num, tune=1000)
+        trace = pm.sample(sample_num, tune=sample_num)
 
     xs, ys = from_trace(trace)
     to_csv(xs, ys)

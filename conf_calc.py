@@ -1,3 +1,5 @@
+import pickle
+
 import numpy as np
 
 from rdkit import Chem
@@ -7,8 +9,8 @@ from wilson_b_matrix import Dihedral, get_current_derivative
 
 import subprocess
 import copy
-import os
-import time
+from typing import Tuple
+from functools import cache
 from pathlib import Path
 
 
@@ -21,20 +23,18 @@ class ConfCalc:
                  dir_to_xyzs: str = "",
                  charge: int = 0,
                  gfn_method: int = 2,
-                 timeout: int = 250,
                  norm_en: float = 0.):
         """
             Class that calculates energy of current molecule
             with selected values of dihedral angles
             mol_file_name - path to .mol file
             mol - Chem.Mol object
-            rotable_dihedral_idxs - list of 4-element-lists with 
+            rotable_dihedral_idxs - list of 4-element-lists with
             integer zero-numerated indexes
             dir_to_xyzs - path of dir, where .xyz files will be saved
             charge - charge of molecule
             gfn_method - type of GFN method
-            timeout - period of checking log file
-            norm_en - norm energy 
+            norm_en - norm energy
         """
 
         assert (mol_file_name is not None or mol is not None), \
@@ -50,29 +50,23 @@ class ConfCalc:
 
         self.rotable_dihedral_idxs = rotable_dihedral_idxs
 
-        if dir_to_xyzs != "":
-            dir_to_xyzs = dir_to_xyzs if dir_to_xyzs[-1] == "/" else dir_to_xyzs + "/"
-
-        self.dir_to_xyzs = dir_to_xyzs
+        self.dir_to_xyzs = Path(dir_to_xyzs)
 
         self.charge = charge
         self.gfn_method = gfn_method
-        self.timeout = timeout
         self.norm_en = norm_en
 
         # Id of next structure to save
-        self.current_id = 0
 
-    def set_norm_en(self,
-                    norm_en=0.):
-        """
-            Updates norm energy
-        """
+        self.xtb_args = ['xtb',
+                         '--charge', str(self.charge),
+                         '--gfn', str(self.gfn_method),
+                         '--opt',
+                         '--grad',
+                         '--namespace',
+                         ]
 
-        self.norm_en = norm_en
-
-    def __setup_dihedrals(self,
-                          values: np.ndarray) -> Chem.Mol:
+    def __setup_dihedrals(self, values: np.ndarray) -> Chem.Mol:
         """
             Private function that returns a molecule with
             selected dihedral angles
@@ -90,27 +84,26 @@ class ConfCalc:
 
         return new_mol
 
-    def __save_mol_to_xyz(self,
-                          mol: Chem.Mol) -> str:
+    def __save_mol_to_xyz(self, mol: Chem.Mol, xyz_name) -> Path:
         """
             Saves given mol to file, returns name of file
         """
 
-        file_name = self.dir_to_xyzs + str(self.current_id) + ".xyz"
-        self.current_id += 1
-        Chem.MolToXYZFile(mol, file_name)
+        Chem.MolToXYZFile(mol, str(xyz_name))
 
-        return file_name
+        return xyz_name
 
-    def __generate_inp(self,
-                       values: np.ndarray) -> str:
+    def __generate_name(self, values: np.ndarray) -> Path:
+        return self.dir_to_xyzs / f"{values[0]}_{values[1]}_{values[2]}.inp"
+
+    def __generate_inp(self, values: np.ndarray) -> Path:
         """
             Generate input that constrains values
             of dihedral angles from 'vals'
             Returns name of inp file
         """
 
-        inp_name = self.dir_to_xyzs + str(self.current_id) + ".inp"
+        inp_name = self.__generate_name(values)
 
         with open(inp_name, "w+") as inp_file:
             inp_file.write("$constrain\n")
@@ -122,22 +115,17 @@ class ConfCalc:
         return inp_name
 
     def __run_xtb(self,
-                  xyz_name: str,
-                  inp_name: str,
-                  req_opt: bool = True,
-                  req_grad: bool = True) -> float:
+                  xyz_name: Path,
+                  inp_name: Path) -> float:
         """
             Runs xtb with current xyz_file, returns name of log file
             xyz_name - name of .xyz file
             inp_name - name of .inp file
         """
-        args = ['xtb', '--input', inp_name, '--charge', str(self.charge), '--gfn', str(self.gfn_method), xyz_name]
-        if req_opt:
-            args.append('--opt')
-        if req_grad:
-            args.append('--grad')
 
-        output = subprocess.run(args, capture_output=True, text=True)
+        output = subprocess.run(self.xtb_args + [xyz_name.stem, xyz_name.name, '--input', inp_name.name],
+                                capture_output=True, text=True, cwd=self.dir_to_xyzs)
+
         return ConfCalc.__parse_energy_from_str(output.stdout)
 
     @staticmethod
@@ -145,69 +133,65 @@ class ConfCalc:
         """
             Gets energy from xtb log file
         """
-        # Path('file.log').write_text(content)
         for line in reversed(content.split('\n')):
             if line.startswith('          | TOTAL ENERGY'):
                 return float(line.split()[3])
 
         return float(0)
 
-    @staticmethod
-    def __parse_grads_from_grads_file(num_of_atoms: int,
-                                      grads_filename: str = "gradient") -> np.ndarray:
+    def __parse_grads_from_grads_file(self,
+                                      num_of_atoms: int,
+                                      namespace: str) -> np.ndarray:
         """
             Read gradinets from file, returns ['num_of_atoms', 3] numpy array with
             cartesian energy derivatives
         """
         grads = []
-        with open(grads_filename, 'r') as file:
+        with open(self.dir_to_xyzs / f'{namespace}.gradient', 'r') as file:
             grads = [line[:-1] for line in file][(2 + num_of_atoms):-1]
         return np.array(list(map(lambda s: list(map(float, s.split())), grads)))
 
+    def __cart_grads_to_irc_grads(self, cart_grads, mol):
+        irc_grad = np.empty(len(self.rotable_dihedral_idxs))
+        for i, rotable_idx in enumerate(self.rotable_dihedral_idxs):
+            irc_grad[i] = get_current_derivative(mol,
+                                                 cart_grads,
+                                                 Dihedral(*rotable_idx))
+        return irc_grad
+
     def __calc_energy(self,
                       mol: Chem.Mol,
-                      inp_name: str,
-                      req_opt: bool = True,
-                      req_grad: bool = True) -> tuple:
+                      inp_name: Path) -> tuple:
         """
             Calculates energy of given molecule via xtb
             inp_name - name of file with input
             retruns tuple of energy and gradient
         """
 
-        xyz_name = self.__save_mol_to_xyz(mol)
-        energy = self.__run_xtb(xyz_name,
-                                inp_name,
-                                req_opt=req_opt,
-                                req_grad=req_grad)
-        irc_grad = None
-        if req_grad:
-            cart_grads = self.__parse_grads_from_grads_file(len(mol.GetAtoms()))
-            irc_grad = np.empty(len(self.rotable_dihedral_idxs))
-            # irc_grad = []
-            for i, rotable_idx in enumerate(self.rotable_dihedral_idxs):
-            # for rotable_idx in self.rotable_dihedral_idxs:
-            #     irc_grad.append((
-            #         rotable_idx,
-            #         get_current_derivative(mol,
-            #                                cart_grads.flatten(),
-            #                                Dihedral(*rotable_idx))
-            #     ))
-                irc_grad[i] = get_current_derivative(mol,
-                                                     cart_grads.flatten(),
-                                                     Dihedral(*rotable_idx))
+        xyz_name = inp_name.with_suffix('.xyz')
+        self.__save_mol_to_xyz(mol, xyz_name)
+        energy = self.__run_xtb(xyz_name, inp_name)
+
+        cart_grads = self.__parse_grads_from_grads_file(len(mol.GetAtoms()), inp_name.stem)
+        irc_grad = self.__cart_grads_to_irc_grads(cart_grads.flatten(), mol)
+
         return energy, irc_grad
 
     def log_prob(self, values: np.ndarray) -> float:
-        return self.get_energy(values, True, False)['energy']
+        energy, _ = self.get_energy(values)
+        return energy
 
     def log_prob_grad(self, values: np.ndarray) -> np.ndarray:
-        return self.get_energy(values, True, True)['gradient']
+        _, grads = self.get_energy(values)
+        return grads
 
-    def get_energy(self,
-                   values: np.ndarray,
-                   req_opt: bool = True,
-                   req_grad: bool = True) -> dict:
+    @staticmethod
+    def get_energy_from_files(inp_name: Path) -> Tuple[float, np.ndarray]:
+        gradient = np.load(inp_name.with_suffix('.npy'))
+        energy = pickle.loads(inp_name.with_suffix('.log').read_bytes())
+        return energy, gradient
+
+    def get_energy(self, values: np.ndarray) -> Tuple[float, np.ndarray]:
         """
             Returns dict with fields:
             'energy' - energy in this point
@@ -215,16 +199,17 @@ class ConfCalc:
             pairs of dihedral angle atom indexes and
             gradients of energy with resoect to this angle
         """
+        inp_name = self.__generate_name(values)
+        if inp_name.with_suffix('.log').exists():
+            return self.get_energy_from_files(inp_name)
+
         inp_name = self.__generate_inp(values)
         mol = self.__setup_dihedrals(values)
 
-        energy, grad = self.__calc_energy(mol,
-                                          inp_name,
-                                          req_opt=req_opt,
-                                          req_grad=req_grad)
+        energy, gradient = self.__calc_energy(mol, inp_name)
         energy -= self.norm_en
 
-        return {
-            'energy': energy,
-            'gradient': grad
-        }
+        np.save(inp_name.with_suffix(''), gradient)
+        inp_name.with_suffix('.log').write_bytes(pickle.dumps(energy))
+
+        return energy, gradient

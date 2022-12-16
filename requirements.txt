@@ -3,3 +3,4 @@ numpy==1.23.5
 pymc==4.2.0
 pandas==1.5.2
 aesara==2.8.2
+numba==0.56.4
