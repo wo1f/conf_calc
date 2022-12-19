@@ -1,4 +1,5 @@
 import pickle
+import shutil
 
 import numpy as np
 
@@ -10,7 +11,6 @@ from wilson_b_matrix import Dihedral, get_current_derivative
 import subprocess
 import copy
 from typing import Tuple
-from functools import cache
 from pathlib import Path
 
 
@@ -23,7 +23,8 @@ class ConfCalc:
                  dir_to_xyzs: str = "",
                  charge: int = 0,
                  gfn_method: int = 2,
-                 norm_en: float = 0.):
+                 norm_en: float = 0.,
+                 clear_cache=True):
         """
             Class that calculates energy of current molecule
             with selected values of dihedral angles
@@ -51,13 +52,17 @@ class ConfCalc:
         self.rotable_dihedral_idxs = rotable_dihedral_idxs
 
         self.dir_to_xyzs = Path(dir_to_xyzs)
+        if clear_cache:
+            shutil.rmtree(self.dir_to_xyzs, ignore_errors=True)
+            self.dir_to_xyzs.mkdir(exist_ok=True)
 
         self.charge = charge
         self.gfn_method = gfn_method
         self.norm_en = norm_en
 
         # Id of next structure to save
-
+        self.dims = 3
+        self.coef = 1045.8491666666666  # хартри в ккал\моль и поделить на RT
         self.xtb_args = ['xtb',
                          '--charge', str(self.charge),
                          '--gfn', str(self.gfn_method),
@@ -177,12 +182,24 @@ class ConfCalc:
 
         return energy, irc_grad
 
+    def log_prob_one(self, values: np.ndarray) -> float:
+        energy, _ = self.get_energy_one(values)
+        energy *= self.coef
+        return energy
+
+    def log_prob_grad_one(self, values: np.ndarray) -> np.ndarray:
+        _, grads = self.get_energy_one(values)
+        grads *= self.coef
+        return grads[2:]
+
     def log_prob(self, values: np.ndarray) -> float:
         energy, _ = self.get_energy(values)
+        energy *= self.coef
         return energy
 
     def log_prob_grad(self, values: np.ndarray) -> np.ndarray:
         _, grads = self.get_energy(values)
+        grads *= self.coef
         return grads
 
     @staticmethod
@@ -190,6 +207,11 @@ class ConfCalc:
         gradient = np.load(inp_name.with_suffix('.npy'))
         energy = pickle.loads(inp_name.with_suffix('.log').read_bytes())
         return energy, gradient
+
+    def get_energy_one(self, values: np.ndarray) -> Tuple[float, np.ndarray]:
+        vals = np.array([0.0, 0.0, 0.0])
+        vals[2] = values[0]
+        return self.get_energy(vals)
 
     def get_energy(self, values: np.ndarray) -> Tuple[float, np.ndarray]:
         """
@@ -211,5 +233,5 @@ class ConfCalc:
 
         np.save(inp_name.with_suffix(''), gradient)
         inp_name.with_suffix('.log').write_bytes(pickle.dumps(energy))
-
+        # print(values, energy)
         return energy, gradient
